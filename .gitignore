@@ -1,0 +1,28 @@
+__pycache__/
+*.py[cod]
+*.egg-info/
+.coverage
+.mypy_cache/
+.pytest_cache/
+.ruff_cache/
+.venv/
+venv/
+build/
+dist/
+
+# Local scan inputs and results may contain sensitive data.
+*.report.json
+reports/
+secrets.txt
+*.env
+
+# Legacy research artifacts: keep them local and out of Git history.
+/[0-9]*.txt
+/jwt_success*.txt
+/*_domains.txt
+/*_ips.txt
+/test.txt
+/urls.txt
+/test_*.py
+/read_configs.py
+
