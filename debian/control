@@ -1,0 +1,34 @@
+Source: jwt-audit
+Section: utils
+Priority: optional
+Maintainer: Liam Giannini <liam.giannini@hotmail.it>
+Build-Depends:
+ debhelper-compat (= 13),
+ dh-sequence-python3,
+ pybuild-plugin-pyproject,
+ python3-all,
+ python3-hatchling,
+ python3-jwt,
+ python3-pytest,
+ python3-pytest-cov,
+ python3-requests,
+ python3-yaml,
+Rules-Requires-Root: no
+Standards-Version: 4.7.2
+Homepage: https://github.com/Liam-G/jwt-audit
+Vcs-Git: https://github.com/Liam-G/jwt-audit.git
+Vcs-Browser: https://github.com/Liam-G/jwt-audit
+
+Package: jwt-audit
+Architecture: all
+Depends:
+ ${misc:Depends},
+ ${python3:Depends},
+ python3-jwt,
+ python3-requests,
+ python3-yaml,
+Description: active and offline JSON Web Token security auditor
+ jwt-audit discovers protected HTTP endpoints and checks whether they accept
+ unsigned JWTs or tokens signed with weak HMAC candidate secrets. It also
+ provides offline token inspection, configurable scan profiles, evidence
+ confirmation, and JSON, text, and SARIF reports.

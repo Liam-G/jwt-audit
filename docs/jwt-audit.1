@@ -1,0 +1,98 @@
+.TH JWT-AUDIT 1 "October 2026" "jwt-audit 0.3.0" "Security Tools"
+.SH NAME
+jwt-audit \- active and offline JSON Web Token security auditor
+.SH SYNOPSIS
+.B jwt-audit scan
+.RI [ options ]
+.br
+.B jwt-audit inspect
+.RI [ options ]
+.SH DESCRIPTION
+.B jwt-audit
+discovers protected HTTP endpoints and tests whether they accept unsigned JWTs
+or tokens signed with weak HMAC candidate secrets. It also inspects compact
+JWTs offline for unsafe algorithms, weak candidate secrets, sensitive claims,
+and missing validation claims.
+.SH SCAN PROFILES
+.TP
+.B safe
+Tests only explicitly supplied endpoints with two short-lived HS256 payloads.
+.TP
+.B standard
+Discovers common API and administration endpoints and tests the full identity
+and privilege mutation matrix with HS256 and two header orderings.
+.TP
+.B deep
+Adds more endpoints and payloads, HS384, HS512, and unsigned-token checks.
+.SH SELECTED OPTIONS
+.TP
+.B --secret-file FILE
+Add newline-delimited HMAC candidate secrets.
+.TP
+.B --openapi FILE
+Import endpoint paths from an OpenAPI JSON or YAML document.
+.TP
+.B --endpoint-pack NAME
+Add a curated endpoint family. This option is repeatable.
+.TP
+.B --fuzz-template PATH
+Expand FUZZ in a path using the built-in or supplied wordlist.
+.TP
+.B --fuzz-wordlist FILE
+Use newline-delimited replacements for FUZZ templates.
+.TP
+.B --payload-file FILE
+Add a JSON, YAML, or JSON Lines claims corpus.
+.TP
+.B --method METHOD
+Set endpoint discovery and test method order. This option is repeatable.
+.TP
+.B --rate N
+Set a global maximum request rate per second.
+.TP
+.B --max-requests N
+Stop after this many HTTP attempts, including retries.
+.TP
+.B --max-runtime SECONDS
+Stop when the runtime budget is exhausted and report partial results.
+.TP
+.B --dry-run
+Print endpoint, payload, candidate, and limiter counts without network traffic.
+.TP
+.B --confusion-key FILE
+Test an approved RSA public key or certificate as an HMAC secret.
+.TP
+.B --token-cookie NAME
+Send JWT candidates in the named cookie instead of the Authorization header.
+.TP
+.B --header NAME:VALUE
+Add a static request header. This option is repeatable.
+.TP
+.B --proxy URL
+Send requests through an HTTP or HTTPS interception proxy.
+.TP
+.B --deny-pattern TEXT
+Treat response bodies containing this text as access denials.
+.TP
+.B --format text|json|sarif
+Select the report format.
+.SH EXAMPLES
+.PP
+.nf
+jwt-audit scan --target https://staging.example.test --profile standard \
+  --acknowledge-authorization I_HAVE_AUTHORIZATION
+.PP
+jwt-audit scan --target https://lab.example.test --profile deep \
+  --secret-file candidates.txt --format sarif --output report.sarif \
+  --acknowledge-authorization I_HAVE_AUTHORIZATION
+.PP
+jwt-audit inspect --token-file token.txt --common-secrets
+.fi
+.SH EXIT STATUS
+0 means no finding, 1 means an operational error, and 2 means one or more
+findings were produced.
+.SH AUTHORIZATION
+Active scanning must only be performed on systems the operator owns or has
+explicit permission to test.
+.SH AUTHOR
+Liam Giannini, Webcracy.ch.

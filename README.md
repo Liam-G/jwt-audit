@@ -1,73 +1,180 @@
 # jwt-audit
 
-`jwt-audit` is an authorization-first command-line tool for checking whether a protected HTTP endpoint accepts an HS256 JSON Web Token signed with a weak candidate secret.
-
-The project is deliberately narrow: it establishes an unauthenticated `401`/`403` baseline, tries only secrets that the operator explicitly supplies, does not follow redirects, and redacts raw secrets and tokens from reports.
+`jwt-audit` is an authorization-first JWT security auditor for penetration testers, application-security teams, and CI pipelines. It combines active endpoint testing with offline token inspection and produces reproducible text, JSON, or SARIF evidence.
 
 > [!CAUTION]
-> Use this tool only on systems you own or have explicit written permission to test. A command-line acknowledgement is a guardrail, not a substitute for authorization. You are responsible for scope, rate limits, privacy, and applicable law.
+> Use active scanning only on systems you own or have explicit written permission to test. The acknowledgement flag records operator intent; it does not grant authorization.
 
-## Why this project exists
+## Capabilities
 
-JWT deployments sometimes ship with placeholder or leaked HMAC secrets. If an application accepts a token signed with such a secret, an attacker may be able to forge claims. `jwt-audit` gives defenders a reproducible way to validate that specific condition without bundling real-world targets or retaining bearer tokens.
+- discovers common protected administration, account, profile, and API endpoints;
+- imports endpoint paths from OpenAPI JSON/YAML, curated endpoint packs, explicit lists, and safe `FUZZ` templates;
+- restores the original 28 identity and privilege payload mutations and expands to 33 in deep mode;
+- tests HS256, HS384, HS512, both common JWT header orderings, and optionally `alg=none`;
+- tests RSA/HMAC algorithm confusion when an approved public key or certificate is supplied;
+- checks built-in placeholder secrets plus operator-provided wordlists;
+- detects real `401`/`403` responses, login redirects, and configurable denial text returned inside `200` responses;
+- retries POST when endpoint discovery receives `405 Method Not Allowed`;
+- follows candidate redirects only when they remain on the same origin;
+- confirms every apparent acceptance with a fresh unauthenticated request;
+- accepts custom JSON/YAML/JSONL claim corpora, individual typed claims, and a base token's unverified claims;
+- controls HTTP methods, HMAC algorithms, header layouts, and unsigned-token testing from the CLI;
+- scans multiple targets concurrently with bounded workers, delay, global rate limiting, retry/backoff, and hard request/runtime caps;
+- caps endpoints and generated candidates, reports truncation, and provides a no-traffic dry run;
+- identifies the matching wordlist line without writing raw secrets or working bearer tokens to reports;
+- inspects JWTs offline for unsigned algorithms, matching HMAC secrets, missing `exp`/`iss`/`aud`, long lifetimes, and sensitive claim names;
+- emits human-readable text, machine-readable JSON, and SARIF 2.1.0.
+
+## Profiles
+
+| Profile | Endpoints | Payloads | Algorithms | Header variants | Unsigned JWT |
+|---|---:|---:|---|---:|---:|
+| `safe` | Explicit only | 2 | HS256 | Library default | No |
+| `standard` | 42 built in + explicit | 28 | HS256 | `alg` first, `typ` first | No |
+| `deep` | 55 built in + explicit | 33 | HS256/384/512 | `alg` first, `typ` first | Yes |
+
+The scanner stops after confirming one finding per vulnerability class—weak secret, unsigned token, and algorithm confusion—on each endpoint. This keeps deep scans bounded while testing every candidate until each configured class is proven.
 
 ## Installation
 
-Requires Python 3.10 or newer.
+Python 3.10 or newer:
 
 ```bash
 python -m venv .venv
 source .venv/bin/activate
-python -m pip install -e .
+python -m pip install .
 ```
 
-For development:
+Development installation:
 
 ```bash
 python -m pip install -e '.[dev]'
 ```
 
-## Usage
+JSON inputs work with the base installation. YAML OpenAPI and payload files require
+`PyYAML` (`python -m pip install PyYAML`); Debian-family packages install it automatically.
 
-Create a local, untracked candidate file:
+## Active scanning
 
-```text
-# secrets.txt
-known-placeholder-from-your-own-deployment
-candidate-from-an-approved-wordlist
-```
-
-Scan explicitly approved endpoints:
+The standard profile is the normal starting point. It includes the built-in endpoint and placeholder-secret dictionaries:
 
 ```bash
-jwt-audit \
+jwt-audit scan \
   --target https://staging.example.test \
-  --endpoint /api/me \
-  --endpoint /api/admin \
-  --secret-file secrets.txt \
-  --delay 0.5 \
-  --output staging.report.json \
+  --profile standard \
   --acknowledge-authorization I_HAVE_AUTHORIZATION
 ```
 
-Exit status is `0` when no issue is found, `2` when one or more findings are reported, and `1` for configuration or network errors. A finding is a validation signal, not proof of impact; reproduce it carefully and follow your disclosure process.
+Add a wordlist, custom endpoints, and JSON output:
 
-Plain HTTP is accepted on loopback for local labs. Other HTTP targets require `--allow-insecure-http` because bearer tokens can otherwise cross the network unencrypted.
+```bash
+jwt-audit scan \
+  --target https://staging.example.test/api \
+  --endpoint /v2/session \
+  --endpoint /v2/admin/users \
+  --secret-file candidates.txt \
+  --profile standard \
+  --format json \
+  --output report.json \
+  --acknowledge-authorization I_HAVE_AUTHORIZATION
+```
 
-## Detection model and limitations
+Deep testing with SARIF output:
 
-For each target and endpoint, the scanner:
+```bash
+jwt-audit scan \
+  --target-file authorized-targets.txt \
+  --endpoint-file application-routes.txt \
+  --secret-file candidates.txt \
+  --profile deep \
+  --workers 8 \
+  --delay 0.2 \
+  --format sarif \
+  --output jwt-audit.sarif \
+  --acknowledge-authorization I_HAVE_AUTHORIZATION
+```
 
-1. sends an unauthenticated `GET` without following redirects;
-2. continues only if the response is `401` or `403`;
-3. signs two short-lived test payloads with each supplied candidate secret;
-4. reports a finding if a candidate receives a `2xx` response.
+Import an OpenAPI description and expand application-specific endpoint words:
 
-This conservative comparison reduces common redirect and public-page false positives, but it cannot determine whether returned data is sensitive or whether claims are authorized. It currently tests only HS256 bearer tokens and GET endpoints. It intentionally does not discover targets, crawl applications, bypass rate limits, randomize identities, or store working tokens.
+```bash
+jwt-audit scan \
+  --target https://staging.example.test \
+  --openapi openapi.yaml \
+  --endpoint-pack admin --endpoint-pack account \
+  --fuzz-template '/api/v2/FUZZ' \
+  --fuzz-wordlist routes.txt \
+  --fuzz-extension json \
+  --secret-file candidates.txt \
+  --acknowledge-authorization I_HAVE_AUTHORIZATION
+```
 
-## Safe local demo
+Use an application-specific claims corpus and explicit scan budgets:
 
-Use an application you control. Point the scanner at a protected local endpoint that returns `401` without a token and `200` for a test token. A deliberately vulnerable example may be added later under `examples/`; the repository does not contact external systems during tests.
+```bash
+jwt-audit scan \
+  --target https://staging.example.test \
+  --payload-file claims.jsonl \
+  --claim 'tenant_id=1' \
+  --method GET --method POST \
+  --algorithm HS256 --algorithm HS512 \
+  --rate 4 --retries 2 --backoff 0.5 \
+  --max-requests 5000 --max-runtime 900 \
+  --max-endpoints 300 --max-candidates 10000 \
+  --acknowledge-authorization I_HAVE_AUTHORIZATION
+```
+
+Preview the exact counts and limits without sending traffic:
+
+```bash
+jwt-audit scan \
+  --target https://staging.example.test \
+  --profile deep --fuzz --dry-run --format json \
+  --acknowledge-authorization I_HAVE_AUTHORIZATION
+```
+
+Test a known RSA public key as an HMAC secret (the classic RS256-to-HS256 confusion condition):
+
+```bash
+jwt-audit scan \
+  --target https://staging.example.test \
+  --profile deep \
+  --confusion-key public-key.pem \
+  --acknowledge-authorization I_HAVE_AUTHORIZATION
+```
+
+Use `--deny-pattern` for applications that return a custom denial message with status `200`. Use `--no-common-secrets` to test only your supplied wordlist. Plain HTTP is limited to loopback unless `--allow-insecure-http` is explicitly supplied.
+
+For authenticated staging gateways and interception workflows, use repeated `--header NAME:VALUE`, `--proxy`, or `--token-cookie NAME`. TLS verification remains enabled unless `--no-verify-tls` is explicitly selected. Custom `Authorization` headers are rejected because that header is reserved for bearer candidates; use static cookies or another gateway header for surrounding authentication.
+
+Exit status is `0` when no finding is confirmed, `2` when findings exist, and `1` for configuration or operational errors.
+
+## Offline inspection
+
+Reading tokens from a file or standard input avoids putting bearer tokens in shell history:
+
+```bash
+jwt-audit inspect --token-file token.txt --common-secrets
+printf '%s' "$JWT_TO_INSPECT" | jwt-audit inspect --format json
+```
+
+Offline inspection performs no network requests.
+
+## How active confirmation works
+
+1. Request each endpoint without a token.
+2. Treat `401`, `403`, login redirects, and configured denial bodies as protected.
+3. On `405`, try the next configured method (GET then POST by default).
+4. Generate candidates from the selected profile's payloads, algorithms, header layouts, and secrets.
+5. Treat a non-denial `2xx` as possible acceptance; same-origin candidate redirects may be followed up to three hops.
+6. Repeat the original request without a token. Report only if that confirmation is still denied.
+
+This removes the original scanner's most common false positives: public `200` pages, redirects to login screens, redirects to unrelated origins, and applications that encode denial messages inside successful HTTP responses.
+
+## Reports and secret handling
+
+Reports never contain raw candidate secrets or generated bearer tokens. A successful wordlist candidate is identified by source and line, such as `candidates.txt:12`, plus a truncated SHA-256 fingerprint. That is enough to reproduce a result locally without leaking the value into CI logs or uploaded SARIF.
+
+Local input and output files such as `secrets.txt`, `*.report.json`, and `reports/` are ignored by Git.
 
 ## Development
 
@@ -79,32 +186,26 @@ pytest
 python -m build
 ```
 
-See [CONTRIBUTING.md](CONTRIBUTING.md) for contribution rules and [SECURITY.md](SECURITY.md) for private vulnerability reporting.
+Tests use in-memory HTTP fakes and never contact external targets. See [CONTRIBUTING.md](CONTRIBUTING.md) and [SECURITY.md](SECURITY.md).
 
-## Publishing checklist
+## Debian, Kali, and Parrot packaging
 
-Before creating the public repository:
+The repository includes Debian source-package metadata, a manual page, and an autopkgtest definition. Build in a clean Debian-family packaging environment:
 
-1. initialize Git and confirm `git status --ignored` lists every legacy scan artifact as ignored;
-2. run the checks above and inspect the contents of both files produced in `dist/`;
-3. create `Liam-G/jwt-audit` on GitHub and enable private vulnerability reporting, Dependabot alerts, and branch protection;
-4. create a signed `v0.1.0` tag only after CI passes.
+```bash
+sudo apt install build-essential devscripts debhelper dh-python \
+  pybuild-plugin-pyproject python3-all python3-hatchling \
+  python3-jwt python3-requests python3-yaml python3-pytest python3-pytest-cov
 
-The old scripts and collected `.txt` data in this working directory are intentionally ignored and explicitly excluded from package builds. Do not force-add them: they contain third-party targets and historical tokens/results. If any of those artifacts have ever entered Git history, rewrite the history before making the repository public and treat exposed credentials as compromised.
+dpkg-buildpackage -us -uc -b
+lintian ../jwt-audit_0.3.0-1_all.deb
+```
 
-## Responsible-use design
+For distribution submission, create and sign a tagged upstream release, generate `jwt-audit_0.3.0.orig.tar.gz`, build with `sbuild`, run `lintian` and `autopkgtest`, and maintain distribution-specific packaging branches. Kali and Parrot both follow Debian source-package workflows; their maintainers make the final repository and section decisions.
 
-- no built-in public targets or harvested data;
-- explicit target, endpoint, secret file, and authorization acknowledgement;
-- TLS required by default outside loopback;
-- redirects disabled to avoid leaving scope;
-- a visible user agent and a nonzero default delay;
-- reports contain only a one-way secret fingerprint, never raw secrets or JWTs;
-- tests use in-memory fakes and make no network requests.
-
-## License
+## Project
 
 Created and maintained by [Liam Giannini](https://github.com/Liam-G) of [Webcracy.ch](https://webcracy.ch).
 
-MIT. See [LICENSE](LICENSE).
+Licensed under the MIT License. Vulnerabilities in `jwt-audit` itself should be reported privately as described in [SECURITY.md](SECURITY.md).
 
