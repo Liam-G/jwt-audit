@@ -46,12 +46,13 @@ def render_sarif(report: ScanReport) -> str:
     rules: dict[str, dict[str, Any]] = {}
     results: list[dict[str, Any]] = []
     for finding in report.findings:
-        if finding.algorithm == "none":
-            rule_id = "JWT-ALG-NONE"
-        elif "confusion" in finding.title.lower():
-            rule_id = "JWT-ALG-CONFUSION"
-        else:
-            rule_id = "JWT-WEAK-SECRET"
+        rule_id = {
+            "unsigned": "JWT-ALG-NONE",
+            "algorithm-manipulation": "JWT-ALG-MANIPULATION",
+            "algorithm-confusion": "JWT-ALG-CONFUSION",
+            "key-edge-case": "JWT-EMPTY-NULL-KEY",
+            "weak-hmac-key": "JWT-WEAK-SECRET",
+        }.get(finding.vulnerability_class, "JWT-FORGED-TOKEN")
         rules[rule_id] = {
             "id": rule_id,
             "name": finding.title,

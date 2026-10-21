@@ -2,6 +2,16 @@
 
 All notable changes are documented here. This project follows semantic versioning.
 
+## Unreleased
+
+### Added
+
+- Active tests for empty, null-byte, and literal-null HMAC signing keys.
+- Algorithm/parser mutations covering non-canonical `none` casing, empty signatures,
+  missing or JSON-null algorithms, and conflicting duplicate `alg` header members.
+- Independent CLI switches for enabling or disabling key edge cases and algorithm mutations.
+- Stable vulnerability classes and dedicated SARIF rule IDs for the new attack families.
+
 ## 0.3.0 - 2026-10-15
 
 ### Added

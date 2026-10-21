@@ -5,6 +5,7 @@ import jwt
 from jwt_audit.tokens import (
     SecretCandidate,
     build_payloads,
+    candidate_count,
     default_payloads,
     encode_candidate,
     encode_unsigned,
@@ -39,3 +40,35 @@ def test_unsigned_and_generated_candidates() -> None:
         include_unsigned=True,
     )
     assert len(candidates) == 5
+
+
+def test_key_edge_cases_and_algorithm_mutations_are_labeled_and_bounded() -> None:
+    candidates = generate_candidates(
+        ({"sub": "admin"},),
+        (),
+        algorithms=("HS256",),
+        header_variants=("alg-first",),
+        include_unsigned=False,
+        include_key_edge_cases=True,
+        include_algorithm_mutations=True,
+    )
+    assert len(candidates) == candidate_count(
+        1,
+        0,
+        algorithms=("HS256",),
+        header_variants=("alg-first",),
+        include_unsigned=False,
+        include_key_edge_cases=True,
+        include_algorithm_mutations=True,
+    )
+    assert len(candidates) == 11
+    assert {candidate.attack_class for candidate in candidates} == {
+        "key-edge-case",
+        "algorithm-manipulation",
+    }
+    labels = {candidate.label for candidate in candidates}
+    assert "built-in:empty-key" in labels
+    assert "built-in:null-byte-key" in labels
+    assert "missing-algorithm" in labels
+    assert "duplicate-algorithm-last-none" in labels
+    assert all(candidate.token.count(".") == 2 for candidate in candidates)

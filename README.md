@@ -11,6 +11,9 @@
 - imports endpoint paths from OpenAPI JSON/YAML, curated endpoint packs, explicit lists, and safe `FUZZ` templates;
 - restores the original 28 identity and privilege payload mutations and expands to 33 in deep mode;
 - tests HS256, HS384, HS512, both common JWT header orderings, and optionally `alg=none`;
+- tests empty, null-byte, and literal `null` HMAC keys without requiring a wordlist;
+- mutates algorithm handling with mixed-case `none`, empty signatures, missing/null `alg`,
+  and conflicting duplicate `alg` members;
 - tests RSA/HMAC algorithm confusion when an approved public key or certificate is supplied;
 - checks built-in placeholder secrets plus operator-provided wordlists;
 - detects real `401`/`403` responses, login redirects, and configurable denial text returned inside `200` responses;
@@ -27,13 +30,16 @@
 
 ## Profiles
 
-| Profile | Endpoints | Payloads | Algorithms | Header variants | Unsigned JWT |
-|---|---:|---:|---|---:|---:|
-| `safe` | Explicit only | 2 | HS256 | Library default | No |
-| `standard` | 42 built in + explicit | 28 | HS256 | `alg` first, `typ` first | No |
-| `deep` | 55 built in + explicit | 33 | HS256/384/512 | `alg` first, `typ` first | Yes |
+| Profile | Endpoints | Payloads | Algorithms | Empty/null keys | Algorithm mutations | Unsigned JWT |
+|---|---:|---:|---|---:|---:|---:|
+| `safe` | Explicit only | 2 | HS256 | No | No | No |
+| `standard` | 42 built in + explicit | 28 | HS256 | Yes | No | No |
+| `deep` | 55 built in + explicit | 33 | HS256/384/512 | Yes | Yes | Yes |
 
-The scanner stops after confirming one finding per vulnerability class—weak secret, unsigned token, and algorithm confusion—on each endpoint. This keeps deep scans bounded while testing every candidate until each configured class is proven.
+The scanner stops after confirming one finding per vulnerability class—weak HMAC key,
+empty/null key, unsigned token, algorithm manipulation, and RSA/HMAC confusion—on each
+endpoint. This keeps deep scans bounded while testing every candidate until each configured
+class is proven.
 
 ## Installation
 
@@ -142,6 +148,21 @@ jwt-audit scan \
   --acknowledge-authorization I_HAVE_AUTHORIZATION
 ```
 
+Run the parser and key edge cases explicitly with any profile:
+
+```bash
+jwt-audit scan \
+  --target https://staging.example.test \
+  --endpoint /api/me --profile safe \
+  --include-key-edge-cases --include-algorithm-mutations \
+  --acknowledge-authorization I_HAVE_AUTHORIZATION
+```
+
+Both switches also have `--no-...` forms, so a deep scan can exclude either family when a
+target's request budget is tight. Algorithm mutations include non-canonical `none` casing,
+HS* tokens with empty signatures, absent and JSON-null algorithms, and duplicate algorithm
+members in both orders.
+
 Use `--deny-pattern` for applications that return a custom denial message with status `200`. Use `--no-common-secrets` to test only your supplied wordlist. Plain HTTP is limited to loopback unless `--allow-insecure-http` is explicitly supplied.
 
 For authenticated staging gateways and interception workflows, use repeated `--header NAME:VALUE`, `--proxy`, or `--token-cookie NAME`. TLS verification remains enabled unless `--no-verify-tls` is explicitly selected. Custom `Authorization` headers are rejected because that header is reserved for bearer candidates; use static cookies or another gateway header for surrounding authentication.
@@ -164,7 +185,8 @@ Offline inspection performs no network requests.
 1. Request each endpoint without a token.
 2. Treat `401`, `403`, login redirects, and configured denial bodies as protected.
 3. On `405`, try the next configured method (GET then POST by default).
-4. Generate candidates from the selected profile's payloads, algorithms, header layouts, and secrets.
+4. Generate candidates from the selected profile's payloads, algorithms, header layouts,
+   secrets, and enabled key/algorithm edge cases.
 5. Treat a non-denial `2xx` as possible acceptance; same-origin candidate redirects may be followed up to three hops.
 6. Repeat the original request without a token. Report only if that confirmation is still denied.
 

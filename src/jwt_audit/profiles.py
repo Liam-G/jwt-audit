@@ -121,32 +121,50 @@ class ScanProfile:
     header_variants: tuple[str, ...]
     deep_payloads: bool
     include_unsigned: bool
+    include_key_edge_cases: bool
+    include_algorithm_mutations: bool
     follow_same_origin_redirects: bool
     workers: int
 
 
 PROFILES = {
-    "safe": ScanProfile("safe", (), ("GET",), ("HS256",), ("library",), False, False, False, 1),
+    "safe": ScanProfile(
+        name="safe",
+        endpoints=(),
+        methods=("GET",),
+        algorithms=("HS256",),
+        header_variants=("library",),
+        deep_payloads=False,
+        include_unsigned=False,
+        include_key_edge_cases=False,
+        include_algorithm_mutations=False,
+        follow_same_origin_redirects=False,
+        workers=1,
+    ),
     "standard": ScanProfile(
-        "standard",
-        COMMON_ENDPOINTS,
-        ("GET", "POST"),
-        ("HS256",),
-        ("alg-first", "typ-first"),
-        False,
-        False,
-        True,
-        4,
+        name="standard",
+        endpoints=COMMON_ENDPOINTS,
+        methods=("GET", "POST"),
+        algorithms=("HS256",),
+        header_variants=("alg-first", "typ-first"),
+        deep_payloads=False,
+        include_unsigned=False,
+        include_key_edge_cases=True,
+        include_algorithm_mutations=False,
+        follow_same_origin_redirects=True,
+        workers=4,
     ),
     "deep": ScanProfile(
-        "deep",
-        DEEP_ENDPOINTS,
-        ("GET", "POST"),
-        ("HS256", "HS384", "HS512"),
-        ("alg-first", "typ-first"),
-        True,
-        True,
-        True,
-        8,
+        name="deep",
+        endpoints=DEEP_ENDPOINTS,
+        methods=("GET", "POST"),
+        algorithms=("HS256", "HS384", "HS512"),
+        header_variants=("alg-first", "typ-first"),
+        deep_payloads=True,
+        include_unsigned=True,
+        include_key_edge_cases=True,
+        include_algorithm_mutations=True,
+        follow_same_origin_redirects=True,
+        workers=8,
     ),
 }

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Iterator
+from dataclasses import replace
 from typing import Any
 
 import pytest
@@ -125,13 +126,47 @@ def test_denial_body_and_post_fallback_discovery() -> None:
 def test_deep_profile_reports_unsigned_acceptance() -> None:
     session = FakeSession([FakeResponse(401), FakeResponse(200), FakeResponse(401)])
     scanner = Scanner(session=session, delay=0, sleeper=lambda _: None)  # type: ignore[arg-type]
+    profile = replace(
+        PROFILES["deep"], include_key_edge_cases=False, include_algorithm_mutations=False
+    )
     findings, protected, tested, errors = scanner._scan_target(  # noqa: SLF001
-        "https://example.test/", ("/admin",), (), PROFILES["deep"], (), True
+        "https://example.test/", ("/admin",), (), profile, (), True
     )
     assert protected == 1
     assert tested == 1
     assert not errors
     assert [finding.algorithm for finding in findings] == ["none"]
+
+
+def test_standard_profile_reports_empty_key_acceptance() -> None:
+    session = FakeSession([FakeResponse(401), FakeResponse(200), FakeResponse(401)])
+    scanner = Scanner(session=session, delay=0, sleeper=lambda _: None)  # type: ignore[arg-type]
+    findings, _, _, errors = scanner._scan_target(  # noqa: SLF001
+        "https://example.test/", ("/admin",), (), PROFILES["standard"], (), True
+    )
+    assert not errors
+    assert len(findings) == 1
+    assert findings[0].vulnerability_class == "key-edge-case"
+    assert findings[0].candidate_label == "built-in:empty-key"
+    assert findings[0].title == "JWT signed with an empty/null key was accepted"
+
+
+def test_algorithm_mutation_has_its_own_finding_class() -> None:
+    session = FakeSession([FakeResponse(401), FakeResponse(200), FakeResponse(401)])
+    profile = replace(
+        PROFILES["deep"],
+        include_unsigned=False,
+        include_key_edge_cases=False,
+        include_algorithm_mutations=True,
+    )
+    scanner = Scanner(session=session, delay=0, sleeper=lambda _: None)  # type: ignore[arg-type]
+    findings, _, _, errors = scanner._scan_target(  # noqa: SLF001
+        "https://example.test/", ("/admin",), (), profile, (), True
+    )
+    assert not errors
+    assert len(findings) == 1
+    assert findings[0].vulnerability_class == "algorithm-manipulation"
+    assert findings[0].header_variant == "alg-case-variant"
 
 
 def test_redirects_are_limited_to_non_login_same_origin_locations() -> None:

@@ -10,7 +10,8 @@ jwt-audit \- active and offline JSON Web Token security auditor
 .SH DESCRIPTION
 .B jwt-audit
 discovers protected HTTP endpoints and tests whether they accept unsigned JWTs
-or tokens signed with weak HMAC candidate secrets. It also inspects compact
+or tokens signed with weak, empty, or null-like HMAC candidate keys. Deep scans
+also test malformed and ambiguous algorithm headers. It inspects compact
 JWTs offline for unsafe algorithms, weak candidate secrets, sensitive claims,
 and missing validation claims.
 .SH SCAN PROFILES
@@ -24,6 +25,8 @@ and privilege mutation matrix with HS256 and two header orderings.
 .TP
 .B deep
 Adds more endpoints and payloads, HS384, HS512, and unsigned-token checks.
+It also enables algorithm/parser mutations. Empty/null key checks are enabled
+by default in both standard and deep profiles.
 .SH SELECTED OPTIONS
 .TP
 .B --secret-file FILE
@@ -61,6 +64,15 @@ Print endpoint, payload, candidate, and limiter counts without network traffic.
 .TP
 .B --confusion-key FILE
 Test an approved RSA public key or certificate as an HMAC secret.
+.TP
+.B --include-key-edge-cases
+Test empty, null-byte, and literal-null HMAC keys. The corresponding
+--no-include-key-edge-cases form disables them.
+.TP
+.B --include-algorithm-mutations
+Test mixed-case none, empty signatures, missing/null algorithms, and duplicate
+algorithm members. The corresponding --no-include-algorithm-mutations form
+disables them.
 .TP
 .B --token-cookie NAME
 Send JWT candidates in the named cookie instead of the Authorization header.
