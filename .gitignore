@@ -9,6 +9,8 @@ __pycache__/
 venv/
 build/
 dist/
+*.bundle
+*.patch
 
 # Local scan inputs and results may contain sensitive data.
 *.report.json
