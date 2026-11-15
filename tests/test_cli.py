@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from pathlib import Path
 from typing import Any
 
@@ -95,6 +96,31 @@ def test_dry_run_prints_fuzzed_bounded_plan(capsys: Any) -> None:
     output = capsys.readouterr().out
     assert '"dry_run": true' in output
     assert '"endpoints_per_target": 11' in output
+
+
+def test_dry_run_supports_keyless_attack_families(capsys: Any) -> None:
+    result = cli.run(
+        [
+            "scan",
+            "--target",
+            "https://example.test",
+            "--endpoint",
+            "/me",
+            "--profile",
+            "safe",
+            "--no-common-secrets",
+            "--include-key-edge-cases",
+            "--include-algorithm-mutations",
+            "--dry-run",
+            "--format",
+            "json",
+            "--acknowledge-authorization",
+            cli.AUTHORIZATION_ACK,
+        ]
+    )
+    assert result == 0
+    plan = json.loads(capsys.readouterr().out)
+    assert plan["candidate_tokens_uncapped"] == 22
 
 
 def test_inspect_command_reads_token_file(tmp_path: Path, capsys: Any) -> None:

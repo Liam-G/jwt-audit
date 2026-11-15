@@ -24,7 +24,13 @@ from .inspector import inspect_token
 from .profiles import ENDPOINT_PACKS, PROFILES
 from .reporting import render_scan
 from .scanner import ConfigurationError, Scanner, normalize_endpoint, normalize_target
-from .tokens import COMMON_SECRETS, SecretCandidate, build_payloads, default_payloads
+from .tokens import (
+    COMMON_SECRETS,
+    SecretCandidate,
+    build_payloads,
+    candidate_count,
+    default_payloads,
+)
 
 AUTHORIZATION_ACK = "I_HAVE_AUTHORIZATION"
 
@@ -128,6 +134,18 @@ def build_parser() -> argparse.ArgumentParser:
         default=[],
     )
     scan.add_argument("--include-unsigned", action=argparse.BooleanOptionalAction, default=None)
+    scan.add_argument(
+        "--include-key-edge-cases",
+        action=argparse.BooleanOptionalAction,
+        default=None,
+        help="Test empty, null-byte, and literal-null HMAC keys",
+    )
+    scan.add_argument(
+        "--include-algorithm-mutations",
+        action=argparse.BooleanOptionalAction,
+        default=None,
+        help="Test case, missing/null/duplicate alg, and empty-signature variants",
+    )
     scan.add_argument(
         "--payload-file",
         action="append",
@@ -262,6 +280,16 @@ def _scan_plan(
     algorithms = tuple(dict.fromkeys(args.algorithm)) or selected.algorithms
     variants = tuple(dict.fromkeys(args.header_variant)) or selected.header_variants
     unsigned = selected.include_unsigned if args.include_unsigned is None else args.include_unsigned
+    key_edges = (
+        selected.include_key_edge_cases
+        if args.include_key_edge_cases is None
+        else args.include_key_edge_cases
+    )
+    algorithm_mutations = (
+        selected.include_algorithm_mutations
+        if args.include_algorithm_mutations is None
+        else args.include_algorithm_mutations
+    )
     base_count = 0
     if not args.no_builtin_payloads:
         base_count = (
@@ -272,10 +300,17 @@ def _scan_plan(
     payload_count = base_count + len(payloads)
     if payload_count == 0:
         raise ConfigurationError("at least one payload is required")
-    if not secrets and not unsigned:
-        raise ConfigurationError("at least one candidate secret is required")
-    candidates = payload_count * len(secrets) * len(algorithms) * len(variants)
-    candidates += payload_count if unsigned else 0
+    if not secrets and not (unsigned or key_edges or algorithm_mutations):
+        raise ConfigurationError("at least one candidate secret or keyless attack is required")
+    candidates = candidate_count(
+        payload_count,
+        len(secrets),
+        algorithms=algorithms,
+        header_variants=variants,
+        include_unsigned=unsigned,
+        include_key_edge_cases=key_edges,
+        include_algorithm_mutations=algorithm_mutations,
+    )
     return {
         "dry_run": True,
         "profile": args.profile,
@@ -431,6 +466,8 @@ def _run_scan(args: argparse.Namespace) -> int:
             algorithms=args.algorithm,
             header_variants=args.header_variant,
             include_unsigned=args.include_unsigned,
+            include_key_edge_cases=args.include_key_edge_cases,
+            include_algorithm_mutations=args.include_algorithm_mutations,
             include_builtin_endpoints=not args.no_builtin_endpoints,
             payloads=payloads,
             include_builtin_payloads=not args.no_builtin_payloads,

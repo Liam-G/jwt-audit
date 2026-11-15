@@ -23,6 +23,7 @@ class Finding:
     confidence: str = "high"
     title: str = "Forged JWT candidate was accepted"
     severity: str = "high"
+    vulnerability_class: str = "weak-hmac-key"
 
     def as_dict(self) -> dict[str, Any]:
         return asdict(self)
